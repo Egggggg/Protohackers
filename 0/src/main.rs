@@ -2,13 +2,15 @@ use tokio::net::TcpListener;
 
 #[tokio::main]
 async fn main() {
-    let listener = TcpListener::bind("127.0.0.1:8080").await.unwrap();
+    let listener = TcpListener::bind("0.0.0.0:8080").await.unwrap();
 
     loop {
-        let (listener, _) = listener.accept().await.unwrap();
+        let (mut socket, _) = listener.accept().await.unwrap();
+
+        println!("nice");
 
         tokio::spawn(async move {
-            let (mut reader, mut writer) = tokio::io::split(listener);
+            let (mut reader, mut writer) = socket.split();
 
             tokio::io::copy(&mut reader, &mut writer).await.unwrap();
         });
