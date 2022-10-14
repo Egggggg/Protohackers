@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    net::TcpListener,
+    net::{TcpListener, TcpStream},
 };
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -20,14 +20,36 @@ async fn main() {
         println!("Connection from {}", addr);
 
         tokio::spawn(async move {
-            loop {
-                let mut content = "".to_owned();
-                socket.read_to_string(&mut content).await.unwrap();
-
-                println!("Content: {}\n\n", content);
-
-                socket.write_all(content.as_ref()).await.unwrap();
-            }
+            process(&mut socket).await;
         });
+    }
+}
+
+async fn process(socket: &mut TcpStream) {
+    loop {
+        let mut content = vec![0; 64];
+
+        loop {
+            let next = socket.read_u8().await;
+
+            match next {
+                Ok(real) => {
+                    if real == b'\n' {
+                        break;
+                    }
+
+                    content.push(real);
+                }
+                Err(_) => {
+                    return;
+                }
+            }
+        }
+
+        let nice = String::from_utf8(content).unwrap();
+
+        println!("Content: {}", nice);
+
+        socket.write_all(nice.as_ref()).await.unwrap();
     }
 }

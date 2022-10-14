@@ -97,7 +97,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "server"
+name = "smoketest"
 version = "0.1.0"
 dependencies = [
  "tokio",
