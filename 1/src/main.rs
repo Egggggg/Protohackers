@@ -1,6 +1,6 @@
 use serde::Deserialize;
 use tokio::{
-    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, Lines},
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::{TcpListener, TcpStream},
 };
 
@@ -9,6 +9,10 @@ struct Transfer {
     method: String,
     number: f32,
 }
+
+const MALFORMED: &'static [u8; 39] = b"{\"method\": \"malformed\", \"prime\": false}";
+const PRIME: &'static [u8; 36] = b"{\"method\": \"isPrime\", \"prime\": true}";
+const NOT_PRIME: &'static [u8; 37] = b"{\"method\": \"isPrime\", \"prime\": false}";
 
 #[tokio::main]
 async fn main() {
@@ -40,17 +44,40 @@ async fn process(socket: &mut TcpStream) {
             Ok(input) => {
                 println!("{:?}", input);
 
-                let output = format!("Method: {}\nNumber: {}", input.method, input.number);
+                if input.method != "isPrime" {
+                    writer.write_all(MALFORMED).await.unwrap();
+                    return;
+                }
 
-                writer.write_all(output.as_ref()).await.unwrap();
+                if input.number.trunc() != input.number {
+                    writer.write_all(NOT_PRIME).await.unwrap();
+                    continue;
+                }
+
+                let abs = input.number.abs();
+                let root = abs.sqrt();
+                let mut factor_found = false;
+
+                println!("abs: {}, root: {}", abs, root);
+
+                for i in 2..=root.ceil() as u32 {
+                    let result = abs / i as f32;
+
+                    if result.trunc() == result {
+                        writer.write_all(NOT_PRIME).await.unwrap();
+                        factor_found = true;
+                        break;
+                    }
+                }
+
+                if !factor_found {
+                    writer.write_all(PRIME).await.unwrap();
+                }
             }
             Err(err) => {
                 println!("{:?}", err);
 
-                writer
-                    .write_all(b"{\"method\": \"malformed\", \"prime\": false}")
-                    .await
-                    .unwrap();
+                writer.write_all(MALFORMED).await.unwrap();
 
                 return;
             }
