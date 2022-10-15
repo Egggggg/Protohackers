@@ -1,13 +1,13 @@
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
+    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, Lines},
     net::{TcpListener, TcpStream},
 };
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Deserialize, Debug)]
 struct Transfer {
     method: String,
-    number: f64,
+    number: f32,
 }
 
 #[tokio::main]
@@ -26,30 +26,34 @@ async fn main() {
 }
 
 async fn process(socket: &mut TcpStream) {
-    loop {
-        let mut content = vec![0; 64];
+    let (reader, mut writer) = socket.split();
 
-        loop {
-            let next = socket.read_u8().await;
+    let buf_reader = BufReader::new(reader);
+    let mut lines = buf_reader.lines();
 
-            match next {
-                Ok(real) => {
-                    if real == b'\n' {
-                        break;
-                    }
+    while let Some(line) = lines.next_line().await.unwrap() {
+        println!("{}", line);
 
-                    content.push(real);
-                }
-                Err(_) => {
-                    return;
-                }
+        let input: Result<Transfer, _> = serde_json::from_str(&line);
+
+        match input {
+            Ok(input) => {
+                println!("{:?}", input);
+
+                let output = format!("Method: {}\nNumber: {}", input.method, input.number);
+
+                writer.write_all(output.as_ref()).await.unwrap();
+            }
+            Err(err) => {
+                println!("{:?}", err);
+
+                writer
+                    .write_all(b"{\"method\": \"malformed\", \"prime\": false}")
+                    .await
+                    .unwrap();
+
+                return;
             }
         }
-
-        let nice = String::from_utf8(content).unwrap();
-
-        println!("Content: {}", nice);
-
-        socket.write_all(nice.as_ref()).await.unwrap();
     }
 }
