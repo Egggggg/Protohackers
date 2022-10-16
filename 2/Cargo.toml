@@ -1,0 +1,8 @@
+[package]
+name = "means"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "net", "io-util"] }
+sorted-vec = "0.8.0"
