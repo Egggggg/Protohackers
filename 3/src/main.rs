@@ -3,33 +3,73 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use regex::Regex;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::{tcp::ReadHalf, TcpListener, TcpStream},
-    sync::mpsc::{self, Sender},
+    sync::broadcast::{self, Sender},
 };
 
-struct User<'a> {
-    name: &'a [u8],
-    id: u16,
-    tx: Sender<Message<'a>>,
+type ID = u8;
+type Input = Vec<u8>;
+type UsedIDs = [bool; (ID::MAX as usize) + 1];
+type UserListArc = Arc<Mutex<UserList>>;
+
+struct User {
+    name: Input,
+    id: ID,
 }
 
-struct NewUser<'a> {
-    name: &'a [u8],
-    tx: Sender<Message<'a>>,
+#[derive(Clone)]
+struct UserMessage {
+    from_id: ID,
+    from_name: Input,
+    content: Input,
 }
 
-#[derive(Clone, Copy)]
-struct Message<'a> {
-    from_id: u16,
-    from_name: &'a [u8],
-    content: &'a [u8],
+// Special is the ID of the user the message refers to, include sends it to
+// only them if true or everyone except them if false
+#[derive(Clone)]
+struct SysMessage {
+    special: ID,
+    content: Input,
+    include: bool,
 }
 
-struct UserList<'a> {
-    users: Vec<User<'a>>,
-    next_id: u16,
+struct UserList {
+    users: Vec<User>,
+    used_ids: UsedIDs,
+}
+
+impl UserList {
+    fn insert(&mut self, name: Input) -> Result<(), ()> {
+        let re = Regex::new("[a-zA-Z0-9]{1,32}").unwrap();
+
+        if !re.is_match(String::from_utf8(name).unwrap().as_ref()) {
+            return Err(());
+        }
+
+        let mut id: ID = 0;
+
+        for (idx, taken) in self.used_ids.iter().enumerate() {
+            if !taken {
+                id = idx as ID;
+            }
+        }
+
+        let user = User { name, id };
+
+        self.users.push(user);
+        self.used_ids[id as usize] = true;
+
+        Ok(())
+    }
+}
+
+#[derive(Clone)]
+enum Message {
+    User(UserMessage),
+    Sys(SysMessage),
 }
 
 #[tokio::main]
@@ -41,24 +81,13 @@ async fn main() {
     }
 
     let listener = TcpListener::bind(addr).await.unwrap();
-    let (tx, mut rx) = mpsc::channel::<Message>(32);
-    let user_list = Arc::new(Mutex::new(UserList {
+    let (tx, mut rx) = broadcast::channel::<Message>(32);
+
+    let tx_arc = Arc::new(tx);
+    let users = Arc::new(Mutex::new(UserList {
         users: Vec::new(),
-        next_id: 0,
+        used_ids: [false; (ID::MAX as usize) + 1],
     }));
-
-    let user_list_send = user_list.clone();
-
-    // Message sender
-    tokio::spawn(async move {
-        while let Some(message) = rx.recv().await {
-            for user in user_list.lock().unwrap().users.iter() {
-                if user.id != message.from_id {
-                    user.tx.send(message);
-                }
-            }
-        }
-    });
 
     // Accept loop
     loop {
@@ -66,23 +95,34 @@ async fn main() {
 
         println!("Connection from {}", addr);
 
+        let tx = tx_arc.clone();
+        let users = users.clone();
+
         tokio::spawn(async move {
-            process(&mut socket).await;
+            process(&mut socket, tx, users).await;
         });
     }
 }
 
-async fn process(socket: &mut TcpStream) {
+async fn process(socket: &mut TcpStream, tx: Arc<Sender<Message>>, users: UserListArc) {
     let (reader, mut writer) = socket.split();
     let mut buf_reader = BufReader::new(reader);
-    let mut lines = buf_reader.lines();
 
     writer
         .write_all(b"welcome to ghoul chat... who are you ?")
         .await
         .unwrap();
 
-    if let Some(username) = lines.next_line().await.unwrap() {}
+    let mut username: Vec<u8> = Vec::new();
+
+    buf_reader.read_until(b'\n', &mut username).await.unwrap();
+    users.lock().unwrap().insert(username);
+
+    let chat_tx = tx.clone();
+
+    chat(buf_reader, chat_tx).await;
+
+    tx.send()
 }
 
-async fn chat(reader: BufReader<ReadHalf<'_>>) {}
+async fn chat(reader: BufReader<ReadHalf<'_>>, tx: Arc<Sender<Message>>) {}

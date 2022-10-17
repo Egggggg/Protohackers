@@ -5,3 +5,4 @@ edition = "2021"
 
 [dependencies]
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "net", "sync", "io-util"] }
+regex = "1"
