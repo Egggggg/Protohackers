@@ -10,17 +10,20 @@ use tokio::{
     sync::broadcast::{self, Sender},
 };
 
+const USER_LIMIT: usize = 20;
+
 type ID = u8;
 type Input = Vec<u8>;
-type UsedIDs = [bool; (ID::MAX as usize) + 1];
+type UsedIDs = [bool; USER_LIMIT];
 type UserListArc = Arc<Mutex<UserList>>;
 
+#[derive(Debug)]
 struct User {
     name: Input,
     id: ID,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct UserMessage {
     from_id: ID,
     from_name: Input,
@@ -29,40 +32,48 @@ struct UserMessage {
 
 // Special is the ID of the user the message refers to, include sends it to
 // only them if true or everyone except them if false
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct SysMessage {
     special: ID,
     content: Input,
     include: bool,
 }
 
+#[derive(Debug)]
 struct UserList {
     users: Vec<User>,
     used_ids: UsedIDs,
 }
 
 impl UserList {
-    fn insert(&mut self, name: Input) -> Result<(), ()> {
-        let re = Regex::new("[a-zA-Z0-9]{1,32}").unwrap();
+    fn insert(&mut self, name: Input) -> Result<()> {
+        let re = Regex::new("[\\w]{1,32}").unwrap();
 
-        if !re.is_match(String::from_utf8(name).unwrap().as_ref()) {
+        if !re.is_match(String::from_utf8(name.clone()).unwrap().as_ref()) {
             return Err(());
         }
 
-        let mut id: ID = 0;
+        let mut idx: Option<ID> = None;
 
-        for (idx, taken) in self.used_ids.iter().enumerate() {
+        for (i, taken) in self.used_ids.iter().enumerate() {
             if !taken {
-                id = idx as ID;
+                idx = Some(i as ID);
             }
         }
 
-        let user = User { name, id };
+        if let Some(id) = idx {
+            println!("New user: {}", String::from_utf8(name.clone()).unwrap());
+            let user = User { name, id };
 
-        self.users.push(user);
-        self.used_ids[id as usize] = true;
+            self.users.push(user);
+            self.used_ids[id as usize] = true;
+            dbg!(self);
 
-        Ok(())
+            Ok(())
+        } else {
+            println!("Name taken");
+            Err(())
+        }
     }
 }
 
@@ -71,6 +82,9 @@ enum Message {
     User(UserMessage),
     Sys(SysMessage),
 }
+
+#[derive(Clone, Debug)]
+enum Error {}
 
 #[tokio::main]
 async fn main() {
@@ -86,7 +100,7 @@ async fn main() {
     let tx_arc = Arc::new(tx);
     let users = Arc::new(Mutex::new(UserList {
         users: Vec::new(),
-        used_ids: [false; (ID::MAX as usize) + 1],
+        used_ids: [false; USER_LIMIT],
     }));
 
     // Accept loop
@@ -121,8 +135,6 @@ async fn process(socket: &mut TcpStream, tx: Arc<Sender<Message>>, users: UserLi
     let chat_tx = tx.clone();
 
     chat(buf_reader, chat_tx).await;
-
-    tx.send()
 }
 
 async fn chat(reader: BufReader<ReadHalf<'_>>, tx: Arc<Sender<Message>>) {}
