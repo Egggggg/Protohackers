@@ -6,15 +6,29 @@ use std::{
 use regex::Regex;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-    net::{tcp::ReadHalf, TcpListener, TcpStream},
+    net::{
+        tcp::{ReadHalf, WriteHalf},
+        TcpListener, TcpStream,
+    },
     sync::broadcast::{self, Sender},
 };
 
 const USER_LIMIT: usize = 20;
 
 type ID = u8;
-type UsedIDs = [bool; USER_LIMIT];
 type UserListArc = Arc<Mutex<UserList>>;
+
+#[derive(Debug, Clone)]
+enum Message {
+    User(UserMessage),
+    Sys(SysMessage),
+}
+
+#[derive(Clone, Debug)]
+enum Error {
+    InvalidName,
+    Full,
+}
 
 #[derive(Debug, Clone)]
 struct User {
@@ -35,13 +49,12 @@ struct UserMessage {
 struct SysMessage {
     special: ID,
     content: String,
-    include: bool,
+    only: bool,
 }
 
 #[derive(Debug)]
 struct UserList {
-    users: Vec<User>,
-    used_ids: UsedIDs,
+    users: [Option<User>; USER_LIMIT],
 }
 
 impl UserList {
@@ -54,8 +67,8 @@ impl UserList {
 
         let mut idx: Option<ID> = None;
 
-        for (i, taken) in self.used_ids.iter().enumerate() {
-            if !taken {
+        for (i, user) in self.users.iter().enumerate() {
+            if user.is_none() {
                 idx = Some(i as ID);
                 break;
             }
@@ -63,34 +76,35 @@ impl UserList {
 
         if let Some(id) = idx {
             println!("New user: {}", name);
-            let user = User { name, id };
+            let user = Some(User { name, id });
 
-            self.users.push(user);
-            self.used_ids[id as usize] = true;
-            dbg!(self);
+            self.users[id as usize] = user;
 
             Ok(id)
         } else {
-            println!("Name taken");
+            println!("Too many ghouls");
             Err(Error::Full)
         }
     }
 
     fn list_users(&self, to: ID) -> String {
-        let mut users = self.users.clone();
-        let idx = users.binary_search_by(|f| f.id.cmp(&to));
+        let mut users: Vec<&User> = Vec::new();
 
-        if idx.is_err() {
-            return "* we fucked up\r\n".to_owned();
+        for (i, user) in self.users.iter().enumerate() {
+            if i == to as usize {
+                continue;
+            }
+
+            if let Some(user) = user {
+                users.push(user);
+            }
         }
-
-        users.remove(idx.unwrap());
-
-        let mut output = format!("* current ghouls: {}", self.users[0].name);
 
         if users.len() == 0 {
             return "* you are the first ghoulie\r\n".to_owned();
         }
+
+        let mut output = format!("* current ghouls: {}", users[0].name);
 
         if users.len() > 1 {
             for (i, user) in users.iter().enumerate() {
@@ -107,18 +121,10 @@ impl UserList {
         output = format!("{}\r\n", output);
         output
     }
-}
 
-#[derive(Clone)]
-enum Message {
-    User(UserMessage),
-    Sys(SysMessage),
-}
-
-#[derive(Clone, Debug)]
-enum Error {
-    InvalidName,
-    Full,
+    fn remove(&mut self, id: ID) {
+        self.users[id as usize] = None;
+    }
 }
 
 #[tokio::main]
@@ -134,8 +140,7 @@ async fn main() {
 
     let tx_arc = Arc::new(tx);
     let users = Arc::new(Mutex::new(UserList {
-        users: Vec::new(),
-        used_ids: [false; USER_LIMIT],
+        users: Default::default(),
     }));
 
     // Accept loop
@@ -167,7 +172,8 @@ async fn process(socket: &mut TcpStream, tx: Arc<Sender<Message>>, users: UserLi
     buf_reader.read_until(b'\n', &mut name_buf).await.unwrap();
 
     let name = String::from_utf8(name_buf).unwrap();
-    let inserted = users.lock().unwrap().insert(name.trim().to_owned());
+    let name = name.trim().to_owned();
+    let inserted = users.lock().unwrap().insert(name.clone());
     let mut id: ID = 0;
 
     match inserted {
@@ -189,16 +195,99 @@ async fn process(socket: &mut TcpStream, tx: Arc<Sender<Message>>, users: UserLi
     }
 
     let user_list = users.lock().unwrap().list_users(id);
+    let welcome = SysMessage {
+        special: id,
+        content: format!("* {} has arrived !\r\n", name),
+        only: false,
+    };
+
+    println!("{} joined ({})", name, id);
 
     writer.write_all(user_list.as_bytes()).await.unwrap();
+    tx.send(Message::Sys(welcome)).unwrap();
 
     let chat_tx = tx.clone();
 
-    chat(buf_reader, chat_tx).await;
+    chat(&mut buf_reader, &mut writer, chat_tx, id, name.clone()).await;
+
+    users.lock().unwrap().remove(id);
+
+    let message = SysMessage {
+        special: id,
+        content: format!("* {} has left the locale\r\n", name),
+        only: false,
+    };
+
+    tx.send(Message::Sys(message)).unwrap();
+
+    println!("{} left ({})", name, id);
 }
 
-async fn chat(reader: BufReader<ReadHalf<'_>>, tx: Arc<Sender<Message>>) {
-    let rx = tx.subscribe();
+async fn chat(
+    reader: &mut BufReader<ReadHalf<'_>>,
+    writer: &mut WriteHalf<'_>,
+    tx: Arc<Sender<Message>>,
+    id: ID,
+    name: String,
+) {
+    let mut rx = tx.subscribe();
 
-    while let Some(message) = rx.recv().await {}
+    loop {
+        let mut msg_buf: Vec<u8> = Vec::new();
+
+        tokio::select! {
+            _ = reader.read_until(b'\n', &mut msg_buf) => {
+                println!("{:?}", msg_buf);
+
+                if msg_buf.len() == 0 {
+                    return;
+                }
+
+                if msg_buf.len() > 1500 {
+                    let message = SysMessage {
+                        special: id,
+                        content: format!("that message has {} characters which is more than 1500\r\n", msg_buf.len()),
+                        only: true,
+                    };
+
+                    tx.send(Message::Sys(message)).unwrap();
+                    continue;
+                }
+
+                let msg = String::from_utf8(msg_buf).unwrap();
+
+                print!("[{name}] {msg}");
+
+                let message = UserMessage {
+                    from_id: id,
+                    from_name: name.clone(),
+                    content: msg,
+                };
+
+                tx.send(Message::User(message)).unwrap();
+            }
+            Ok(message) = rx.recv() => {
+                match message {
+                    Message::User(message) => {
+                        if message.from_id != id {
+                            let content = format!("[{}] {}", message.from_name, message.content);
+
+                            writer.write_all(content.as_bytes()).await.unwrap();
+                        }
+                    }
+                    Message::Sys(message) => {
+                        if message.only {
+                            if message.special == id {
+                                writer.write_all(message.content.as_bytes()).await.unwrap();
+                            }
+                        } else {
+                            if message.special != id {
+                                writer.write_all(message.content.as_bytes()).await.unwrap();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
