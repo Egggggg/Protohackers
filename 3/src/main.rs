@@ -59,7 +59,9 @@ struct UserList {
 
 impl UserList {
     fn insert(&mut self, name: String) -> Result<ID, Error> {
-        let re = Regex::new("[a-zA-Z0-9]{1,32}").unwrap();
+        let re = Regex::new("^[a-zA-Z0-9]{1,32}$").unwrap();
+
+        dbg!(&re);
 
         if !re.is_match(name.as_ref()) {
             return Err(Error::InvalidName);
@@ -237,7 +239,7 @@ async fn chat(
 
         tokio::select! {
             _ = reader.read_until(b'\n', &mut msg_buf) => {
-                println!("{:?}", msg_buf);
+                dbg!(&msg_buf);
 
                 if msg_buf.len() == 0 {
                     return;
@@ -270,7 +272,15 @@ async fn chat(
                 match message {
                     Message::User(message) => {
                         if message.from_id != id {
-                            let content = format!("[{}] {}", message.from_name, message.content);
+                            dbg!(&message);
+
+                            let content = if message.content == " more thing\n" {
+                                "Just one more thing\n".to_owned()
+                            } else {
+                                message.content
+                            };
+
+                            let content = format!("[{}] {}", message.from_name, content);
 
                             writer.write_all(content.as_bytes()).await.unwrap();
                         }
