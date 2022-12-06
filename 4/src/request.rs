@@ -1,16 +1,8 @@
-use std::{net::SocketAddr, sync::Arc};
-
-use tokio::net::UdpSocket;
-
 use crate::Database;
 
-pub async fn handle_request(
-    addr: SocketAddr,
-    buf: Vec<u8>,
-    socket: Arc<UdpSocket>,
-    db: Database,
-) -> Result<(), ()> {
+pub fn handle_request(buf: Vec<u8>, db: Database) -> Option<String> {
     let req = String::from_utf8(buf).map_err(|_| ()).unwrap();
+    let req = req.trim();
 
     dbg!(&req);
 
@@ -19,10 +11,16 @@ pub async fn handle_request(
         let (key, value) = req.split_once('=').unwrap();
         db.lock().unwrap().insert(key.to_owned(), value.to_owned());
         // insertions do not respond
+        None
     } else {
         // all other requests are retrievals
         let db = db.lock().unwrap();
-        let value = db.get(&req);
+
+        if req == "version" {
+            return Some("version=69 :)".to_owned());
+        }
+
+        let value = db.get(req);
 
         let value = match value {
             Some(s) => s,
@@ -31,8 +29,6 @@ pub async fn handle_request(
 
         let output = format!("{req}={value}");
 
-        socket.send_to(output.as_bytes(), addr).await.unwrap();
+        Some(output)
     }
-
-    Ok(())
 }

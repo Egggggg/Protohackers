@@ -27,7 +27,7 @@ async fn main() -> io::Result<()> {
         // wait for the socket to be readable
         socket.readable().await?;
 
-        let mut buf = vec![0u8; 32];
+        let mut buf = vec![0u8; 999];
         let (len, addr) = socket.recv_from(&mut buf).await?;
 
         // only allow requests under 1000 bytes
@@ -38,12 +38,19 @@ async fn main() -> io::Result<()> {
         // wait for the socket to be writable
         socket.writable().await?;
 
-        let socket2 = socket.clone();
-        let db2 = db.clone();
+        let socket_clone = socket.clone();
+        let db_clone = db.clone();
+        let buf = (&buf[..len]).to_vec();
 
         // spawn a thread to handle the request
         tokio::spawn(async move {
-            handle_request(addr, buf, socket2, db2).await;
+            if let Some(res) = handle_request(buf, db_clone) {
+                let res = res.as_bytes();
+
+                let sent = socket_clone.send_to(res, addr).await;
+
+                dbg!(sent);
+            }
         });
     }
 }
