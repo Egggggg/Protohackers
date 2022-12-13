@@ -2,9 +2,7 @@ use crate::Database;
 
 pub fn handle_request(buf: Vec<u8>, db: Database) -> Option<String> {
     let req = String::from_utf8(buf).map_err(|_| ()).unwrap();
-    let req = req.trim();
-
-    dbg!(&req);
+    let req = req.trim_start();
 
     if req.contains('=') {
         // insertions are '{key}={value}', they always have an '='

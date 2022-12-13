@@ -47,9 +47,7 @@ async fn main() -> io::Result<()> {
             if let Some(res) = handle_request(buf, db_clone) {
                 let res = res.as_bytes();
 
-                let sent = socket_clone.send_to(res, addr).await;
-
-                dbg!(sent);
+                socket_clone.send_to(res, addr).await.ok();
             }
         });
     }
