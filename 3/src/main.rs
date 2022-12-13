@@ -233,10 +233,9 @@ async fn chat(
     name: String,
 ) {
     let mut rx = tx.subscribe();
+    let mut msg_buf: Vec<u8> = Vec::new();
 
     loop {
-        let mut msg_buf: Vec<u8> = Vec::new();
-
         tokio::select! {
             _ = reader.read_until(b'\n', &mut msg_buf) => {
                 dbg!(&msg_buf);
@@ -267,20 +266,13 @@ async fn chat(
                 };
 
                 tx.send(Message::User(message)).unwrap();
+                msg_buf = Vec::new();
             }
             Ok(message) = rx.recv() => {
                 match message {
                     Message::User(message) => {
                         if message.from_id != id {
-                            dbg!(&message);
-
-                            let content = if message.content == " more thing\n" {
-                                "Just one more thing\n".to_owned()
-                            } else {
-                                message.content
-                            };
-
-                            let content = format!("[{}] {}", message.from_name, content);
+                            let content = format!("[{}] {}", message.from_name, message.content);
 
                             writer.write_all(content.as_bytes()).await.unwrap();
                         }
