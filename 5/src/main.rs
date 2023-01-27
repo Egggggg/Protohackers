@@ -13,10 +13,12 @@ async fn main() {
     let listener = TcpListener::bind(addr).await.unwrap();
 
     loop {
-        let (mut socket, addr) = listener.accept().await.unwrap();
+        let (socket, addr) = listener.accept().await.unwrap();
+
+        println!("Connection from {addr}");
 
         tokio::spawn(async move {
-            handle_session(socket).await;
+            handle_session(socket, addr).await;
         });
     }
 }
