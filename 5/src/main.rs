@@ -9,7 +9,7 @@ const ENDPOINT: &'static str = "chat.protohackers.com:16963";
 
 #[tokio::main]
 async fn main() {
-    let addr = "0.0.0.0:8080";
+    let addr = ":::8080";
     let listener = TcpListener::bind(addr).await.unwrap();
 
     loop {

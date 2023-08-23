@@ -19,7 +19,7 @@ pub async fn handle_session(mut user: TcpStream, addr: SocketAddr) {
 
     let mut user_buf: Vec<u8> = Vec::new();
     let mut server_buf: Vec<u8> = Vec::new();
-    let re = Regex::new(r"^ ?(7[[:alnum:]]{25,34})|(7[[:alnum:]]{25,34}) ?\n$").unwrap();
+    let re = Regex::new(r"(^ ?(7[[:alnum:]]{25,34}))|((7[[:alnum:]]{25,34}) ?\n$)").unwrap();
 
     loop {
         // look for boguscoin address and replace with 7YWHMfk9JZe0LM0g1ZauHuiSxhI
